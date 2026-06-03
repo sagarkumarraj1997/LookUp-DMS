@@ -1,0 +1,626 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum UserRole {
+  SUPER_ADMIN
+  ORG_ADMIN
+  REPO_ADMIN
+  MANAGER
+  CONTRIBUTOR
+  REVIEWER
+  VIEWER
+  EXTERNAL_GUEST
+}
+
+enum Permission {
+  VIEW
+  CREATE
+  EDIT
+  DELETE
+  SHARE
+  DOWNLOAD
+  APPROVE
+  SIGN
+  ARCHIVE
+  MANAGE_USERS
+}
+
+enum FileStatus {
+  ACTIVE
+  ARCHIVED
+  DELETED
+  CHECKED_OUT
+}
+
+enum WorkflowStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum SignatureStatus {
+  PENDING
+  SIGNED
+  DECLINED
+  EXPIRED
+}
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  FILE_UPLOAD
+  FILE_DOWNLOAD
+  FILE_DELETE
+  FILE_SHARE
+  FILE_VIEW
+  FILE_EDIT
+  FILE_MOVE
+  FILE_COPY
+  FILE_RESTORE
+  FOLDER_CREATE
+  FOLDER_DELETE
+  FOLDER_MOVE
+  REPO_CREATE
+  REPO_EDIT
+  REPO_ARCHIVE
+  USER_CREATE
+  USER_EDIT
+  USER_DELETE
+  PERMISSION_CHANGE
+  WORKFLOW_TRIGGER
+  SIGNATURE_REQUEST
+  SIGNATURE_COMPLETE
+  COMMENT_ADD
+  COMMENT_DELETE
+}
+
+enum NotificationType {
+  FILE_SHARED
+  COMMENT_MENTION
+  APPROVAL_REQUEST
+  SIGNATURE_REQUEST
+  WORKFLOW_COMPLETE
+  FILE_UPLOAD
+  SYSTEM_ALERT
+}
+
+// ============================================
+// CORE MODELS
+// ============================================
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  logo        String?
+  domain      String?
+  plan        String   @default("enterprise")
+  isActive    Boolean  @default(true)
+  settings    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       UserOrganization[]
+  repositories Repository[]
+  departments  Department[]
+  auditLogs   AuditLog[]
+  invitations Invitation[]
+
+  @@map("organizations")
+}
+
+model Department {
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  organizationId String
+  parentId       String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent       Department?   @relation("DepartmentHierarchy", fields: [parentId], references: [id])
+  children     Department[]  @relation("DepartmentHierarchy")
+  repositories Repository[]
+
+  @@map("departments")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  role          UserRole  @default(VIEWER)
+  isActive      Boolean   @default(true)
+  mfaEnabled    Boolean   @default(false)
+  mfaSecret     String?
+  lastLogin     DateTime?
+  mustChangePassword Boolean @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  organizations UserOrganization[]
+  uploadedFiles Document[]     @relation("UploadedBy")
+  ownedFiles    Document[]     @relation("OwnedBy")
+  comments      Comment[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  signatureRequests SignatureRequest[] @relation("RequestedBy")
+  signatures    Signature[]
+  workflowInstances WorkflowInstance[]
+  sharedLinks   SharedLink[]
+  checkouts     DocumentCheckout[]
+  noteCollaborators NoteCollaborator[]
+  whiteboardCollaborators WhiteboardCollaborator[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model UserOrganization {
+  id             String     @id @default(cuid())
+  userId         String
+  organizationId String
+  role           UserRole   @default(VIEWER)
+  permissions    Permission[]
+  isDefault      Boolean    @default(false)
+  joinedAt       DateTime   @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@map("user_organizations")
+}
+
+model Invitation {
+  id             String    @id @default(cuid())
+  email          String
+  organizationId String
+  role           UserRole  @default(VIEWER)
+  token          String    @unique @default(cuid())
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("invitations")
+}
+
+// ============================================
+// REPOSITORY & FILE MODELS
+// ============================================
+
+model Repository {
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  organizationId String
+  departmentId   String?
+  driveRootFolderId String?
+  driveRootFolderPath String?
+  isPublic       Boolean  @default(false)
+  isArchived     Boolean  @default(false)
+  template       String?
+  retentionDays  Int?
+  settings       Json     @default("{}")
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  department   Department?   @relation(fields: [departmentId], references: [id])
+  folders      Folder[]
+  documents    Document[]
+  permissions  RepositoryPermission[]
+  workflows    Workflow[]
+  signatureTemplates SignatureTemplate[]
+
+  @@map("repositories")
+}
+
+model RepositoryPermission {
+  id           String     @id @default(cuid())
+  repositoryId String
+  userId       String?
+  role         UserRole
+  permissions  Permission[]
+  createdAt    DateTime   @default(now())
+
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@map("repository_permissions")
+}
+
+model Folder {
+  id           String   @id @default(cuid())
+  name         String
+  repositoryId String
+  parentId     String?
+  driveId      String?
+  path         String
+  isArchived   Boolean  @default(false)
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  parent     Folder?    @relation("FolderHierarchy", fields: [parentId], references: [id])
+  children   Folder[]   @relation("FolderHierarchy")
+  documents  Document[]
+
+  @@map("folders")
+}
+
+model Document {
+  id           String     @id @default(cuid())
+  name         String
+  description  String?
+  repositoryId String
+  folderId     String?
+  driveFileId  String     @unique
+  driveWebViewLink String?
+  driveDownloadLink String?
+  mimeType     String
+  fileSize     BigInt
+  extension    String?
+  version      Int        @default(1)
+  status       FileStatus @default(ACTIVE)
+  tags         String[]
+  metadata     Json       @default("{}")
+  uploadedById String
+  ownedById    String
+  isPublic     Boolean    @default(false)
+  checksum     String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  folder     Folder?    @relation(fields: [folderId], references: [id])
+  uploadedBy User       @relation("UploadedBy", fields: [uploadedById], references: [id])
+  ownedBy    User       @relation("OwnedBy", fields: [ownedById], references: [id])
+  versions   DocumentVersion[]
+  comments   Comment[]
+  sharedLinks SharedLink[]
+  signatures SignatureRequest[]
+  checkouts  DocumentCheckout[]
+  aiSummaries AiDocumentSummary[]
+
+  @@map("documents")
+}
+
+model DocumentVersion {
+  id          String   @id @default(cuid())
+  documentId  String
+  version     Int
+  driveFileId String
+  changeNote  String?
+  fileSize    BigInt
+  createdAt   DateTime @default(now())
+  createdById String
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("document_versions")
+}
+
+model DocumentCheckout {
+  id          String    @id @default(cuid())
+  documentId  String
+  userId      String
+  checkedOutAt DateTime @default(now())
+  checkedInAt  DateTime?
+  expiresAt   DateTime?
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@map("document_checkouts")
+}
+
+// ============================================
+// COLLABORATION MODELS
+// ============================================
+
+model Comment {
+  id         String   @id @default(cuid())
+  content    String
+  documentId String
+  authorId   String
+  parentId   String?
+  mentions   String[]
+  isResolved Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  document Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  author   User      @relation(fields: [authorId], references: [id])
+  parent   Comment?  @relation("CommentThread", fields: [parentId], references: [id])
+  replies  Comment[] @relation("CommentThread")
+
+  @@map("comments")
+}
+
+model SharedLink {
+  id           String    @id @default(cuid())
+  documentId   String
+  createdById  String
+  token        String    @unique @default(cuid())
+  permissions  Permission[]
+  password     String?
+  expiresAt    DateTime?
+  maxDownloads Int?
+  downloadCount Int      @default(0)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+
+  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@map("shared_links")
+}
+
+// ============================================
+// NOTES MODULE
+// ============================================
+
+model Note {
+  id           String   @id @default(cuid())
+  title        String
+  content      Json     @default("{}")
+  repositoryId String?
+  isPublic     Boolean  @default(false)
+  template     String?
+  tags         String[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  collaborators NoteCollaborator[]
+
+  @@map("notes")
+}
+
+model NoteCollaborator {
+  id     String   @id @default(cuid())
+  noteId String
+  userId String
+  role   String   @default("editor")
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([noteId, userId])
+  @@map("note_collaborators")
+}
+
+// ============================================
+// WHITEBOARD MODULE
+// ============================================
+
+model Whiteboard {
+  id           String   @id @default(cuid())
+  title        String
+  content      Json     @default("{}")
+  repositoryId String?
+  isPublic     Boolean  @default(false)
+  thumbnail    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  collaborators WhiteboardCollaborator[]
+
+  @@map("whiteboards")
+}
+
+model WhiteboardCollaborator {
+  id           String @id @default(cuid())
+  whiteboardId String
+  userId       String
+  role         String @default("editor")
+
+  whiteboard Whiteboard @relation(fields: [whiteboardId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id])
+
+  @@unique([whiteboardId, userId])
+  @@map("whiteboard_collaborators")
+}
+
+// ============================================
+// E-SIGNATURE MODULE
+// ============================================
+
+model SignatureRequest {
+  id           String          @id @default(cuid())
+  documentId   String
+  requestedById String
+  title        String
+  message      String?
+  status       WorkflowStatus  @default(ACTIVE)
+  dueDate      DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  document    Document    @relation(fields: [documentId], references: [id])
+  requestedBy User        @relation("RequestedBy", fields: [requestedById], references: [id])
+  signatures  Signature[]
+
+  @@map("signature_requests")
+}
+
+model Signature {
+  id                 String          @id @default(cuid())
+  signatureRequestId String
+  signerId           String
+  status             SignatureStatus @default(PENDING)
+  signedAt           DateTime?
+  signatureData      String?
+  ipAddress          String?
+  order              Int             @default(0)
+  createdAt          DateTime        @default(now())
+
+  signatureRequest SignatureRequest @relation(fields: [signatureRequestId], references: [id], onDelete: Cascade)
+  signer           User            @relation(fields: [signerId], references: [id])
+
+  @@map("signatures")
+}
+
+model SignatureTemplate {
+  id           String   @id @default(cuid())
+  name         String
+  repositoryId String
+  fields       Json
+  createdAt    DateTime @default(now())
+
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@map("signature_templates")
+}
+
+// ============================================
+// WORKFLOW MODULE
+// ============================================
+
+model Workflow {
+  id           String         @id @default(cuid())
+  name         String
+  description  String?
+  repositoryId String
+  trigger      Json
+  steps        Json
+  status       WorkflowStatus @default(ACTIVE)
+  template     String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  repository Repository        @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  instances  WorkflowInstance[]
+
+  @@map("workflows")
+}
+
+model WorkflowInstance {
+  id          String         @id @default(cuid())
+  workflowId  String
+  triggeredById String
+  status      WorkflowStatus @default(ACTIVE)
+  context     Json           @default("{}")
+  startedAt   DateTime       @default(now())
+  completedAt DateTime?
+
+  workflow    Workflow @relation(fields: [workflowId], references: [id])
+  triggeredBy User     @relation(fields: [triggeredById], references: [id])
+
+  @@map("workflow_instances")
+}
+
+// ============================================
+// NOTIFICATIONS & AUDIT
+// ============================================
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  data      Json             @default("{}")
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model AuditLog {
+  id             String      @id @default(cuid())
+  action         AuditAction
+  userId         String?
+  organizationId String?
+  resourceId     String?
+  resourceType   String?
+  details        Json        @default("{}")
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime    @default(now())
+
+  user         User?         @relation(fields: [userId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
+
+  @@map("audit_logs")
+}
+
+// ============================================
+// AI MODULE
+// ============================================
+
+model AiDocumentSummary {
+  id         String   @id @default(cuid())
+  documentId String
+  summary    String   @db.Text
+  keyPoints  String[]
+  tags       String[]
+  sentiment  String?
+  createdAt  DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("ai_document_summaries")
+}
