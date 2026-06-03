@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma"
+import { Prisma } from "@prisma/client"
 import { NotificationType } from "@/types"
 
 export async function createNotification(
@@ -14,7 +15,7 @@ export async function createNotification(
       type,
       title,
       message,
-      data: data ?? {},
+      data: (data ?? {}) as Prisma.InputJsonValue,
     },
   })
 }

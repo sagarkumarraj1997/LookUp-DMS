@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma"
+import { Prisma } from "@prisma/client"
 import { sendEmailNotification, createNotification } from "@/lib/notifications"
 
 export interface WorkflowContext {
@@ -26,11 +27,11 @@ export async function executeWorkflow(workflowId: string, context: WorkflowConte
       workflowId,
       triggeredById: context.userId ?? context.triggeredBy ?? "",
       status: "ACTIVE",
-      context: context as Record<string, unknown>,
+      context: context as Prisma.InputJsonValue,
     },
   })
 
-  const steps = workflow.steps as WorkflowStep[]
+  const steps = workflow.steps as unknown as WorkflowStep[]
 
   try {
     for (const step of steps) {
