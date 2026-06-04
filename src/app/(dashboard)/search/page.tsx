@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
 import { motion } from "framer-motion"
@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import Link from "next/link"
 import { formatDistanceToNow } from "date-fns"
 
-export default function SearchPage() {
+function SearchPageInner() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const [query, setQuery] = useState(searchParams.get("q") ?? "")
@@ -236,5 +236,13 @@ export default function SearchPage() {
         </div>
       ) : null}
     </motion.div>
+  )
+}
+
+export default function SearchPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500" /></div>}>
+      <SearchPageInner />
+    </Suspense>
   )
 }

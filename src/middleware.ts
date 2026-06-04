@@ -1,30 +1,38 @@
-import { auth } from "@/lib/auth"
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 
-export default auth((req) => {
-  const { nextUrl, auth: session } = req
-  const isLoggedIn = !!session
+const PUBLIC_PATHS = ["/", "/login", "/register", "/forgot-password", "/offline"]
+const AUTH_PATHS = ["/login", "/register", "/forgot-password"]
 
-  const isAuthRoute = nextUrl.pathname.startsWith("/login") ||
-    nextUrl.pathname.startsWith("/register") ||
-    nextUrl.pathname.startsWith("/forgot-password")
+export function middleware(req: NextRequest) {
+  const { pathname } = req.nextUrl
 
-  const isApiAuthRoute = nextUrl.pathname.startsWith("/api/auth")
-  const isPublicRoute = nextUrl.pathname === "/"
-
-  if (isApiAuthRoute) return NextResponse.next()
-  if (isAuthRoute) {
-    if (isLoggedIn) {
-      return NextResponse.redirect(new URL("/dashboard", nextUrl))
-    }
+  if (
+    pathname.startsWith("/_next") ||
+    pathname.startsWith("/api/auth") ||
+    pathname.startsWith("/share") ||
+    pathname.match(/\.(ico|png|svg|jpg|jpeg|webp|woff2?)$/)
+  ) {
     return NextResponse.next()
   }
-  if (!isLoggedIn && !isPublicRoute) {
-    return NextResponse.redirect(new URL("/login", nextUrl))
+
+  const sessionToken =
+    req.cookies.get("next-auth.session-token")?.value ||
+    req.cookies.get("__Secure-next-auth.session-token")?.value
+
+  const isLoggedIn = !!sessionToken
+  const isPublic = PUBLIC_PATHS.includes(pathname)
+  const isAuthPath = AUTH_PATHS.includes(pathname)
+
+  if (isAuthPath && isLoggedIn) {
+    return NextResponse.redirect(new URL("/dashboard", req.url))
   }
+  if (!isLoggedIn && !isPublic) {
+    return NextResponse.redirect(new URL("/login", req.url))
+  }
+
   return NextResponse.next()
-})
+}
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.png$).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 }

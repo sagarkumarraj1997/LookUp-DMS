@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { motion } from "framer-motion"
 import { useForm } from "react-hook-form"
@@ -40,7 +40,7 @@ const triggerOptions = [
   { value: "SCHEDULE", label: "Scheduled", icon: Clock, description: "Run on a schedule" },
 ]
 
-export default function WorkflowBuilderPage() {
+function WorkflowBuilderPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { toast } = useToast()
@@ -234,5 +234,13 @@ export default function WorkflowBuilderPage() {
         </div>
       </div>
     </motion.div>
+  )
+}
+
+export default function WorkflowBuilderPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500" /></div>}>
+      <WorkflowBuilderPageInner />
+    </Suspense>
   )
 }
